@@ -1,0 +1,1 @@
+Goal of the project is the complete emulation of an SLE 4442 smartcard using an AVR.
