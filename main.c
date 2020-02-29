@@ -1,12 +1,41 @@
+/*
+ * sle4442.c
+ *
+ * Created: 16/02/2020 12:52:28
+ * Author : Pietro
+ */ 
+
 // cpu: ATMega8
 // speed: 8 MHz
 
 //#define DEBUG
 //#define BACKDOOR
+//#define WRITE_PSC
 
 #define F_CPU 8000000UL
 #include "sle4442.h"
 #include "memory.h"
+
+void EEPROM_write(unsigned int uiAddress, unsigned char ucData)
+{
+    /* Wait for completion of previous write */
+    while(EECR & (1<<EEWE));
+    /* Set up address and data registers */
+    EEAR = uiAddress;EEDR = ucData;
+    /* Write logical one to EEMWE */
+    EECR |= (1<<EEMWE);
+    /* Start eeprom write by setting EEWE */
+    EECR |= (1<<EEWE);
+}
+
+void store_psc()
+{
+    cli();
+    EEPROM_write(0x00,memorySecurity[1]);
+    EEPROM_write(0x01,memorySecurity[2]);
+    EEPROM_write(0x02,memorySecurity[3]);
+    sei();
+}
 
 static inline void edgeFalling() {
     switch (mode) {
@@ -102,6 +131,9 @@ static inline void edgeFalling() {
                     {
                         unlocked = 3;
                         memorySecurity[0x00] = 0x07;
+                        #ifdef WRITE_PSC
+                            store_psc();
+                        #endif                          
                     }
                 #else
                     if ((memorySecurity[command[1]] == command[2]) & (memorySecurity[0x00] != 0x00))
@@ -114,7 +146,7 @@ static inline void edgeFalling() {
                         }
                     }
                     else
-                	unlocked = 0;    
+                        unlocked = 0;    
                 #endif
                 waitCycles(2);
                 setInput();
