@@ -2,7 +2,7 @@
 // speed: 8 MHz
 
 //#define DEBUG
-#define BACKDOOR
+//#define BACKDOOR
 
 #define F_CPU 8000000UL
 #include "sle4442.h"
