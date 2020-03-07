@@ -278,6 +278,8 @@ int main(void) {
     PIN = 0x00;
     setInput();
     setMode(MODE_IDLE);
+    pointerByte = 0;
+    pointerBit = -1;
 
     #ifdef DEBUG
     initializeDebug();
