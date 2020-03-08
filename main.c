@@ -1,20 +1,16 @@
-/*
- * sle4442.c
- *
- * Created: 16/02/2020 12:52:28
- * Author : Pietro
- */ 
-
 // cpu: ATMega8
 // speed: 8 MHz
 
 //#define DEBUG
-//#define BACKDOOR
+#define BACKDOOR
 //#define WRITE_PSC
 
 #define F_CPU 8000000UL
 #include "sle4442.h"
 #include "memory.h"
+
+volatile char is_start = 0;
+volatile char is_stop = 0;
 
 void EEPROM_write(unsigned int uiAddress, unsigned char ucData)
 {
@@ -39,6 +35,9 @@ void store_psc()
 
 static inline void edgeFalling() {
     switch (mode) {
+        case MODE_LAST_BIT:
+            setMode(MODE_WAIT_STOP); 
+        break;   
         case MODE_ATR:
             // Answer-to-Reset
             if (pointerByte <= 3)
@@ -49,7 +48,7 @@ static inline void edgeFalling() {
             else 
             { // ATR finished
                 setInput();
-                setMode(MODE_IDLE);
+                setMode(MODE_WAIT_START);
             }
         break;
         case MODE_DATA:
@@ -65,7 +64,7 @@ static inline void edgeFalling() {
                 else 
                 { // Reading finished
                     setInput();
-                    setMode(MODE_IDLE);
+                    setMode(MODE_WAIT_START);
                 }
             break;
             case 0x34: // Read Protection Memory
@@ -77,7 +76,7 @@ static inline void edgeFalling() {
                 else 
                 { // Reading finished
                     setInput();
-                    setMode(MODE_IDLE);
+                    setMode(MODE_WAIT_START);
                 }
             break;
             case 0x31: // Read Security Memory
@@ -92,7 +91,7 @@ static inline void edgeFalling() {
                 else 
                 { // Reading finished
                     setInput();
-                    setMode(MODE_IDLE);
+                    setMode(MODE_WAIT_START);
                 }
             break;
         }
@@ -119,7 +118,7 @@ static inline void edgeFalling() {
                     waitCycles(2);
                 }        
                 setInput();
-                setMode(MODE_IDLE);
+                setMode(MODE_WAIT_START);
             break;
             case 0x33: // Compare Verification Data
                 setIO(0);
@@ -150,7 +149,7 @@ static inline void edgeFalling() {
                 #endif
                 waitCycles(2);
                 setInput();
-                setMode(MODE_IDLE);
+                setMode(MODE_WAIT_START);
             break;
             case 0x3C: // Write Protection Memory     
                 setIO(0);
@@ -168,7 +167,7 @@ static inline void edgeFalling() {
                 else
                     waitCycles(2);
                 setInput();
-                setMode(MODE_IDLE);
+                setMode(MODE_WAIT_START);
             break;
             case 0x38: // Update Main Memory
                 setIO(0);
@@ -186,7 +185,7 @@ static inline void edgeFalling() {
                 else
                     waitCycles(2);                
                 setInput();
-                setMode(MODE_IDLE);
+                setMode(MODE_WAIT_START);
             break;
         }
         break;
@@ -203,11 +202,6 @@ static inline void edgeRising(bool bit) {
 
     switch (mode) {
         case MODE_IDLE:
-            // Idle Mode - Waiting for command
-            loop_until_bit_is_clear(PIN,PIN_IO);
-            pointerByte = 0;
-            pointerBit = -1;
-            setMode(MODE_CMD);
         break;
         case MODE_CMD:
             // Command Mode
@@ -217,27 +211,27 @@ static inline void edgeRising(bool bit) {
                     command[pointerByte] |= (1 << pointerBit);
                 else
                     command[pointerByte] &= ~(1 << pointerBit);
-            } 
-            else 
-            {
-                loop_until_bit_is_set(PIN,PIN_IO);
-                pointerByte = 0;
-                pointerBit = 0;
-                switch (command[0]) {
-                    case 0x30: // Read Main Memory
-                        pointerByte = command[1];
-                    case 0x34: // Read Protection Memory
-                    case 0x31: // Read Security Memory
-                        setMode(MODE_DATA);
-                    break;
-                    case 0x39: // Update Security Memory
-                    case 0x33: // Compare Verification Data
-                    case 0x3C: // Write Protection Memory
-                    case 0x38: // Update Main Memory
-                        setMode(MODE_PROC);
+                if (pointerByte==2 && pointerBit==7)
+                    setMode(MODE_LAST_BIT);    
+            }  
+        break;
+        case MODE_WAIT_STOP:
+            pointerByte = 0;
+            pointerBit = 0;
+            switch (command[0]) {
+                case 0x30: // Read Main Memory
+                    pointerByte = command[1];
+                case 0x34: // Read Protection Memory
+                case 0x31: // Read Security Memory
+                    mode_temp = MODE_DATA;
                 break;
-            }
-        }
+                case 0x39: // Update Security Memory
+                case 0x33: // Compare Verification Data
+                case 0x3C: // Write Protection Memory
+                case 0x38: // Update Main Memory
+                    mode_temp = MODE_PROC;
+                break;
+            }           
         break;
     }
 }
@@ -246,12 +240,42 @@ static inline void edgeRising(bool bit) {
 ISR(INT0_vect)
 {
     if (!(PIN & (1 << PIN_CLK)))
-        edgeFalling();
-    else
     {
+        if (in_mode && mode==MODE_WAIT_START && is_start)
+        {     
+            if ((READ_IO)==0)
+            {
+                pointerByte = 0;
+                pointerBit = -1;
+                setMode(MODE_CMD);
+            }                
+            is_start = 0;  
+        }  
+        else if (in_mode && mode==MODE_WAIT_STOP && is_stop)
+        {
+            if (READ_IO)
+                setMode(mode_temp);
+            is_stop=0;
+        }
+             
+        edgeFalling();
+    }    
+    else
+    { 
         if (PIN & (1 << PIN_RST))
-            setMode(MODE_ATR);    
-        edgeRising(PIN & (1 << PIN_IO));
+            setMode(MODE_ATR);
+        else if (in_mode && mode==MODE_WAIT_START && !is_start)
+        {
+            if (READ_IO)
+                is_start = 1;               
+        }
+        else if (in_mode && mode==MODE_WAIT_STOP && !is_stop)
+        {
+            if ((READ_IO)==0)
+                is_stop = 1;
+        }
+        edgeRising(READ_IO);         
+             
     }    
 }
 
@@ -259,7 +283,7 @@ ISR(INT0_vect)
 ISR(INT1_vect)
 {
     setInput();
-    setMode(MODE_IDLE);
+    setMode(MODE_WAIT_START);
     pointerByte = 0;
     pointerBit = -1;
 }
@@ -277,7 +301,7 @@ int main(void) {
     DDR = 0x00;
     PIN = 0x00;
     setInput();
-    setMode(MODE_IDLE);
+    setMode(MODE_WAIT_START);
     pointerByte = 0;
     pointerBit = -1;
 
