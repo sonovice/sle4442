@@ -5,6 +5,8 @@
 // Global variables
 volatile unsigned char mode;
 volatile unsigned char unlocked = 0;
+volatile unsigned char in_mode = 0;
+volatile unsigned char mode_temp=0;
 
 // Pin/Port configuration
 #define PIN_CLK		PD2	// INT0
@@ -14,12 +16,16 @@ volatile unsigned char unlocked = 0;
 #define PIN			PIND
 #define DDR 		DDRD
 
+#define READ_IO     PIN & (1 << PIN_IO)
+
 // Some helpful functions
 static inline void setOutput() {
 	DDR |= (1 << PIN_IO);
+    in_mode = 0;
 }
 static inline void setInput() {
 	DDR &= ~(1 << PIN_IO);
+    in_mode = 1;
 }
 static inline void setIO(bool b) {
 	if (b)
@@ -43,6 +49,9 @@ static inline void waitCycles(unsigned char c) {
 #define MODE_DATA	3
 #define MODE_PROC	4
 #define MODE_IDLE	5
+#define MODE_WAIT_START	6
+#define MODE_WAIT_STOP	7
+#define MODE_LAST_BIT 8
 
 // Memory pointers
 volatile unsigned int pointerByte = 0;
@@ -51,7 +60,6 @@ volatile signed char pointerBit = 0;
 
 // Command bytes
 unsigned char command[3];
-
 
 #ifdef DEBUG
 // DEBUG
@@ -68,3 +76,4 @@ static inline void debugToggle(){
 	PORTD ^= (1 << PD1);
 }
 #endif
+
