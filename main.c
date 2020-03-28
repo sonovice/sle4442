@@ -130,7 +130,6 @@ int main(void) {
         //=============================================================
         if (is_falling)
         {
-            SET_DBG
             if (mode==MODE_ATR)
             {
                 data_out = (memPtr[addr] >> pointerBit) & 0x01;
@@ -205,12 +204,10 @@ int main(void) {
                     addr++;
                 }      
             }          
-            RESET_DBG  
             is_falling = 0;          
         }
         else if (is_rising)
         {
-            SET_DBG
             if (mode==MODE_CMD && count<=23)   
             {     
                 cmd = (cmd << 1) | data_in; 
@@ -328,7 +325,6 @@ int main(void) {
                 
                 count++;
             }          
-            RESET_DBG
             is_rising = 0;     
         }   
         //=============================================================
