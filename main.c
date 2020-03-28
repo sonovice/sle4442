@@ -284,12 +284,15 @@ int main(void) {
                 else if (control==0x33) //Compare verification data
                 {
                     #ifdef BACKDOOR
-                        unlocked++;
-                        memorySecurity[addr] = data;
-                        if (unlocked >= 3)
+                        if (addr != 0)
                         {
-                            unlocked = 3;
-                            memorySecurity[0x00] = 0x07;
+                            unlocked++;
+                            memorySecurity[addr] = data;
+                            if (unlocked >= 3)
+                            {
+                                unlocked = 3;
+                                memorySecurity[0x00] = 0x07;
+                            }
                         }
                         addr = 0;
                     #else
