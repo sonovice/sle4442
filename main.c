@@ -21,6 +21,16 @@ volatile unsigned char is_falling=0;
 volatile unsigned char is_rising=0;
 volatile unsigned char exec_reset=0;
 
+volatile unsigned char count=0;
+volatile unsigned char control=0;
+volatile unsigned int  addr=0;
+volatile unsigned char data=0;
+volatile unsigned char cmd=0;
+volatile unsigned char fail=0;
+volatile unsigned char byteProt=0;
+volatile unsigned char bitProt=0;
+volatile unsigned char *memPtr;
+
 void EEPROM_write(unsigned int uiAddress, unsigned char ucData)
 {
     /* Wait for completion of previous write */
@@ -42,9 +52,200 @@ void store_psc()
     sei();
 }
 
+static inline void  falling_clock()
+{
+    data_out = (memPtr[addr] >> pointerBit) & 0x01;
+    
+    if (control==0xFF)  //Fake "control" value for put at the output the ATR
+    {
+        if (addr==4 && pointerBit==1)
+        {
+            setInput();
+            mode = MODE_WAIT_START;
+            count = 0;
+        }
+    }
+    else if (control==0x30)
+    {
+        if (addr==256 && pointerBit==1)
+        {
+            setInput();
+            mode = MODE_WAIT_START;
+            count = 0;
+        }
+    }
+    else if (control==0x34)
+    {
+        if (addr==4 && pointerBit==1)
+        {
+            setInput();
+            mode = MODE_WAIT_START;
+            count = 0;
+        }
+    }
+    else if (control==0x31)
+    {
+        if (addr==4 && pointerBit==1)
+        {
+            setInput();
+            mode = MODE_WAIT_START;
+            count = 0;
+        }
+    }
+    else if (fail)
+    {
+        if (addr==0 && pointerBit==3)
+        {
+            fail = 0;
+            setInput();
+            mode = MODE_WAIT_START;
+            count = 0;
+        }
+    }
+    else if ((control==0x38 || control==0x3C) && fail==0)
+    {
+        if (addr==15 && pointerBit==5)  //15*8 + 5 = 125
+        {
+            setInput();
+            mode = MODE_WAIT_START;
+            count = 0;
+        }
+    }
+    
+    pointerBit++;
+    if (pointerBit==8)
+    {
+        pointerBit = 0;
+        addr++;
+    }
+}
+
+static inline void  rising_clock()
+{
+    cmd = (cmd << 1) | data_in;
+    if (count==7) //control ready
+        control = lut[cmd];
+    else if (count==15) //address ready
+    {
+        addr = lut[cmd];
+        //Put as output all zero, if i found a read command i change the pointer value
+        memPtr = memoryZero;
+        if (control==0x30) //Read Main Memory
+            memPtr = memoryMain;
+        else if (control==0x34) //Read Protection Memory
+        {
+            addr = 0;
+            memPtr = memoryProtected;
+        }
+        else if (control==0x31) //Read Security Memory
+        {
+            addr = 0;
+            memoryOut[0] = memorySecurity[0];
+            if (unlocked == 3)
+                memPtr = memorySecurity;
+            else
+                memPtr = memoryOut;
+        }
+        byteProt = (addr >> 3) & 0x03;
+        bitProt = addr & 0x07;
+    }
+    else if (count==16) //Use this extra counter value to execute some instructions
+    {
+        fail = 1;
+        if (control==0x38 && unlocked==3) //Update main memory
+        {
+            if (addr>31)
+                fail = 0;
+            else
+                fail = !((memoryProtected[byteProt] >> bitProt) & 0x01);
+        }
+        else if (control==0x3C && unlocked==3) //Write protection memory
+        {
+            if ((memoryProtected[byteProt] >> bitProt) & 0x01)
+                fail = 0;
+            addr = 0;
+        }
+        
+    }
+    else if (count==23) //data ready
+    {
+        mode = MODE_WAIT_STOP;
+        pointerBit = 0;
+        data = lut[cmd];
+        
+        if (control==0x38) //Update main memory
+        {
+            if (!fail)
+                memoryMain[addr] = data;
+            addr = 0;
+        }
+        else if (control==0x3C) //Write protection memory
+        {
+            if (!fail)
+                memoryProtected[byteProt] &= ~(1 << bitProt);
+            addr = 0;
+        }
+        else if (control==0x39) //Update security memory
+        {
+            if (unlocked == 3)
+            {
+                memorySecurity[addr] = data;
+                memorySecurity[0x00] &= 0x07;
+                fail = 0;
+            }
+            else if (addr == 0x00)
+            {
+                if (data <= memorySecurity[0x00])
+                {
+                    memorySecurity[0x00] = data;
+                    fail = 0;
+                }
+                else
+                fail = 1;
+            }
+            addr = 0;
+        }
+        else if (control==0x33) //Compare verification data
+        {
+            #ifdef BACKDOOR
+                if (addr != 0)
+                {
+                    unlocked++;
+                    memorySecurity[addr] = data;
+                    if (unlocked >= 3)
+                    {
+                        unlocked = 3;
+                        memorySecurity[0x00] = 0x07;
+                    }       
+                }
+                addr = 0;
+            #else
+                if ((memorySecurity[addr] == data) & (memorySecurity[0x00] != 0x00))
+                {
+                    unlocked++;
+                    if (unlocked >= 3)
+                    {
+                        unlocked = 3;
+                        memorySecurity[0x00] = 0x07;
+                    }
+                }
+                else
+                    unlocked = 0;
+                addr = 0;
+            #endif
+        }
+        
+        data_out = (unsigned char)(memPtr[addr]) & 0x01;
+        pointerBit++;
+    }
+    
+    count++;  
+}
+
 // Clock interrupt
 ISR(INT0_vect)
 {
+    //SET_DBG
     data_in = (READ_IO) >> PIN_IO;  
     if (!(PIN & (1 << PIN_CLK)))
     {
@@ -63,7 +264,8 @@ ISR(INT0_vect)
             is_stop=0;  
         }
  
-        is_falling = 1 & (mode==MODE_OUT);
+        if (mode==MODE_OUT)
+            falling_clock();
     }    
     else
     { 
@@ -77,9 +279,10 @@ ISR(INT0_vect)
         else if (!data_in && mode==MODE_WAIT_STOP)
             is_stop = 1;
         
-        is_rising = 1 & (mode==MODE_CMD);          
+        if (mode==MODE_CMD)
+            rising_clock();       
     }   
-     
+    //RESET_DBG 
 }
 
 // Reset interrupt
@@ -89,15 +292,6 @@ ISR(INT1_vect)
 }
 
 int main(void) {
-    unsigned char count=0;
-    unsigned char control=0;
-    unsigned char addr=0;
-    unsigned char data=0;
-    unsigned char cmd=0;
-    unsigned char fail=0;
-    unsigned char byteProt=0;
-    unsigned char bitProt=0;
-    unsigned char *memPtr;  
     
     memPtr = memoryMain;
     
@@ -105,6 +299,7 @@ int main(void) {
     
     // Activate interrupts
     MCUCR |= (1 << ISC00) | (1 << ISC11) | (1 << ISC10);
+    
     GICR |= (1 << INT0) | (1 << INT1);
     sei();
 
@@ -125,199 +320,6 @@ int main(void) {
 
     while(1)
     {
-        //=============================================================
-        // RISE AND FALL DATA CONTROL
-        //=============================================================
-        if (is_falling)
-        {         
-            data_out = (memPtr[addr] >> pointerBit) & 0x01;
-            
-            if (control==0xFF)  //Fake "control" value for put at the output the ATR
-            {
-                if (addr==4 && pointerBit==1)
-                {
-                    setInput();
-                    mode = MODE_WAIT_START;
-                    count = 0;
-                }
-            }             
-            else if (control==0x30)
-            {
-                if (addr==256 && pointerBit==1)
-                {
-                    setInput();
-                    setMode(MODE_WAIT_START);  
-                    count = 0;  
-                }                 
-            }   
-            else if (control==0x34)      
-            {
-                if (addr==4 && pointerBit==1)
-                {
-                    setInput();
-                    setMode(MODE_WAIT_START);
-                    count = 0;
-                }    
-            } 
-            else if (control==0x31)
-            {
-                if (addr==4 && pointerBit==1)
-                {
-                    setInput();
-                    setMode(MODE_WAIT_START);
-                    count = 0;
-                }
-            }
-            else if (fail)
-            {
-                if (addr==0 && pointerBit==3)
-                {
-                    fail = 0;
-                    setInput();
-                    setMode(MODE_WAIT_START);
-                    count = 0;
-                }
-            }
-            else if ((control==0x38 || control==0x3C) && fail==0)
-            {
-                if (addr==15 && pointerBit==5)  //15*8 + 5 = 125
-                {
-                    setInput();
-                    setMode(MODE_WAIT_START);
-                    count = 0;
-                }   
-            }
-            
-            pointerBit++;
-            if (pointerBit==8)
-            {
-                pointerBit = 0;
-                addr++;
-            }      
-            is_falling = 0;          
-        }
-        else if (is_rising)
-        {
-            cmd = (cmd << 1) | data_in; 
-            if (count==7) //control ready
-                control = lut[cmd];            
-            else if (count==15) //address ready
-            {
-                addr = lut[cmd];
-                //Put as output all zero, if i found a read command i change the pointer value
-                memPtr = memoryZero; 
-                if (control==0x30) //Read Main Memory
-                    memPtr = memoryMain;
-                else if (control==0x34) //Read Protection Memory
-                {
-                    addr = 0;
-                    memPtr = memoryProtected;
-                }
-                else if (control==0x31) //Read Security Memory
-                {
-                    addr = 0;
-                    memoryOut[0] = memorySecurity[0];
-                    if (unlocked == 3)
-                        memPtr = memorySecurity; 
-                    else
-                        memPtr = memoryOut;
-                }
-                byteProt = (addr >> 3) & 0x03;
-                bitProt = addr & 0x07;
-            }           
-            else if (count==16) //Use this extra counter value to execute some instructions
-            {                    
-                fail = 1;
-                if (control==0x38 && unlocked==3) //Update main memory
-                {
-                    if (addr>31)
-                        fail = 0;
-                    else
-                        fail = !((memoryProtected[byteProt] >> bitProt) & 0x01);
-                }
-                else if (control==0x3C && unlocked==3) //Write protection memory
-                {
-                    if ((memoryProtected[byteProt] >> bitProt) & 0x01)
-                        fail = 0;
-                    addr = 0;
-                }
-                
-            }     
-            else if (count==23) //data ready
-            {
-                mode = MODE_WAIT_STOP;
-                pointerBit = 0;
-                data = lut[cmd];
-                
-                if (control==0x38) //Update main memory
-                {
-                    if (!fail)
-                        memoryMain[addr] = data;
-                    addr = 0;
-                }       
-                else if (control==0x3C) //Write protection memory
-                {
-                    if (!fail)
-                        memoryProtected[byteProt] &= ~(1 << bitProt);
-                    addr = 0;
-                }             
-                else if (control==0x39) //Update security memory
-                {
-                    if (unlocked == 3)
-                    {
-                        memorySecurity[addr] = data;
-                        memorySecurity[0x00] &= 0x07;
-                        fail = 0;
-                    }
-                    else if (addr == 0x00)
-                    {
-                        if (data <= memorySecurity[0x00])
-                        {
-                            memorySecurity[0x00] = data;
-                            fail = 0;
-                        }
-                        else
-                            fail = 1;
-                    }
-                    addr = 0;
-                }
-                else if (control==0x33) //Compare verification data
-                {
-                    #ifdef BACKDOOR
-                        if (addr != 0)
-                        {
-                            unlocked++;
-                            memorySecurity[addr] = data;
-                            if (unlocked >= 3)
-                            {
-                                unlocked = 3;
-                                memorySecurity[0x00] = 0x07;
-                            }
-                        }
-                        addr = 0;
-                    #else
-                        if ((memorySecurity[addr] == data) & (memorySecurity[0x00] != 0x00))
-                        {
-                            unlocked++;
-                            if (unlocked >= 3)
-                            {
-                                unlocked = 3;
-                                memorySecurity[0x00] = 0x07;
-                            }
-                        }
-                        else
-                        unlocked = 0;
-                        addr = 0;
-                    #endif
-                }   
-                                     
-                data_out = (unsigned char)(memPtr[addr]) & 0x01;
-                pointerBit++;    
-            }
-            
-            count++;     
-            is_rising = 0;     
-        }   
         //=============================================================
         // RESET ROUTINE
         //=============================================================
