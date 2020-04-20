@@ -10,7 +10,7 @@ This is a smartcard emulator for ATMEGA8 microcontroller. The original code was 
 
 ⚠️ **WARNING** ⚠️
 
-The maximum input clock frequency will be around 35KHz, not the 50KHz specified in the SLE4442 datasheet. I've tried my best to optimize the code but this is the main limitation of this project, you can try to use an external 16MHz clock for a better performance.
+The maximum input clock frequency will be around 35KHz, not the 50KHz specified in the SLE4442 datasheet. This is the main limitation of this project, you can try to use an external 16MHz clock for a better performance.
 
 ## Bugs fixed by @Ptr-srix4k
 - In a real SLE4442, an ATR is sent only if clock is pulsed when reset is high, otherwise a simple reset happens. This behavior is not present in the original code, so the interrupt logic was changed to reflect this behavior.
