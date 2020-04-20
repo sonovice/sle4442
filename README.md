@@ -1,5 +1,5 @@
 # SLE4442 Emulator
-This is a smartcard emulator for ATMEGA8 microcontroller. The original code was written by me (@sonovice) and improved and fixed in large parts by [Ptr-srix4k](https://github.com/Ptr-srix4k).
+This is a smartcard emulator for ATMEGA8 microcontroller. The original code was written by me (sonovice) and improved and fixed in large parts by [Ptr-srix4k](https://github.com/Ptr-srix4k).
 
 ## Schematic
 ![Schematic](https://i.imgur.com/YaTSVsc.png)
